@@ -1,12 +1,26 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { authMiddleware } = require('../middleware/auth');
 
+// Rate limiters
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts
+  message: { message: 'Too many login attempts. Please try again later.' }
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // 3 accounts per hour
+  message: { message: 'Too many accounts created. Please try again later.' }
+});
+
 // Register
-router.post('/register', [
+router.post('/register', registerLimiter, [
   body('username').isLength({ min: 3 }).trim().escape(),
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 })
@@ -56,7 +70,7 @@ router.post('/register', [
 });
 
 // Login
-router.post('/login', [
+router.post('/login', loginLimiter, [
   body('email').isEmail().normalizeEmail(),
   body('password').notEmpty()
 ], async (req, res) => {

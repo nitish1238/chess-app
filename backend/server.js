@@ -4,40 +4,39 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const passport = require('passport');
 const authRoutes = require('./routes/auth');
 const gameRoutes = require('./routes/games');
 const GameManager = require('./chess/gameManager');
 const StockfishEngine = require('./ai/stockfish');
-const authMiddleware = require('./middleware/auth');
+const { authMiddleware } = require('./middleware/auth');
+const connectDB = require('./config/database');
 
 dotenv.config();
+const validateEnv = require('./config/validateEnv');
+validateEnv();
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigin = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
+
+app.use(cors({
+  origin: allowedOrigin,
+  credentials: true
+}));
+
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: allowedOrigin,
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+connectDB();
 
 // Middleware
-app.use(cors({
-  origin: 'http://localhost:3000',
-  credentials: true
-}));
 app.use(express.json());
-app.use(passport.initialize());
-require('./config/passport')(passport);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -127,6 +126,11 @@ io.on('connection', (socket) => {
     
     if (result.success) {
       const game = gameManager.getGameState(gameId);
+      const isGameOver = game.in_checkmate() || game.in_stalemate();
+      const winner = game.in_checkmate() 
+        ? (game.turn() === 'w' ? 'black' : 'white')
+        : (game.in_stalemate() ? 'draw' : null);
+      
       io.to(gameId).emit('move-made', {
         fen: game.fen(),
         move: { from, to, promotion },
@@ -136,7 +140,7 @@ io.on('connection', (socket) => {
         history: game.history()
       });
 
-      // Save move to database
+      // Save move to database with winner
       const Game = require('./models/Game');
       await Game.findOneAndUpdate(
         { gameId: gameId },
@@ -144,28 +148,28 @@ io.on('connection', (socket) => {
           fen: game.fen(),
           moves: game.history(),
           lastMoveAt: new Date(),
-          status: game.in_checkmate() || game.in_stalemate() ? 'completed' : 'active'
+          status: isGameOver ? 'completed' : 'active',
+          winner: winner
         }
       );
 
-      // Request AI suggestion after opponent's move
+      // Send AI suggestion to the player whose turn it is now
       const gameState = gameManager.getGameState(gameId);
-      const currentPlayerId = gameState.turn() === 'w' ? 
-        gameManager.getWhitePlayerId(gameId) : gameManager.getBlackPlayerId(gameId);
+      const nextPlayerId = gameState.turn() === 'w' 
+        ? gameManager.getWhitePlayerId(gameId) 
+        : gameManager.getBlackPlayerId(gameId);
       
-      if (currentPlayerId === socket.userId) {
+      const suggestionReceiver = nextPlayerId;
+      const receiverSocketId = userSockets.get(suggestionReceiver);
+      
+      if (receiverSocketId) {
+        const User = require('./models/User');
+        const user = await User.findById(suggestionReceiver);
+        const depth = user && user.subscriptionStatus === 'active' ? 20 : 12;
+        
         stockfishEngine.getBestMove(gameState.fen(), (bestMove) => {
-          socket.emit('ai-suggestion', { bestMove });
-          
-          // Save AI suggestion to database for paid users
-          const User = require('./models/User');
-          User.findById(socket.userId).then(user => {
-            if (user && user.subscriptionStatus === 'active') {
-              // Premium feature: log AI suggestions
-              console.log(`AI suggestion for user ${socket.userId}: ${bestMove}`);
-            }
-          });
-        });
+          io.to(receiverSocketId).emit('ai-suggestion', { bestMove });
+        }, depth);
       }
     } else {
       socket.emit('invalid-move', { message: result.error });
@@ -199,7 +203,7 @@ io.on('connection', (socket) => {
     if (userId) {
       userSockets.delete(userId);
       socketUsers.delete(socket.id);
-      gameManager.removePlayer(socket.id);
+      gameManager.removePlayer(userId);
     }
   });
 });

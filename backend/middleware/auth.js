@@ -27,9 +27,12 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// Check subscription middleware
-const requireSubscription = (req, res, next) => {
-  if (req.user.subscriptionStatus !== 'active') {
+// Check subscription middleware with expiry validation
+const requireSubscription = async (req, res, next) => {
+  // Check if subscription is active using the model method
+  const isActive = await req.user.isSubscriptionActive();
+  
+  if (!isActive) {
     return res.status(403).json({ 
       message: 'Premium feature. Please upgrade your subscription.',
       requiresUpgrade: true
@@ -38,7 +41,7 @@ const requireSubscription = (req, res, next) => {
   next();
 };
 
-// Rate limiting for free users
+// Rate limiting for free users (in-memory, consider Redis for production)
 const rateLimitFreeUsers = (maxRequests = 10, windowMs = 60000) => {
   const requests = new Map(); // userId -> { count, resetTime }
   

@@ -2,7 +2,7 @@ const Chess = require('chess.js').Chess;
 
 class GameManager {
   constructor() {
-    this.games = new Map(); // gameId -> { game, whitePlayerId, blackPlayerId, createdAt }
+    this.games = new Map();
     this.playerToGame = new Map(); // userId -> gameId
   }
 
@@ -26,7 +26,7 @@ class GameManager {
     
     if (!gameData) return false;
     if (gameData.blackPlayerId) return false;
-    if (gameData.whitePlayerId === playerId) return false; // Can't play against yourself
+    if (gameData.whitePlayerId === playerId) return false;
     
     gameData.blackPlayerId = playerId;
     this.playerToGame.set(playerId, gameId);
@@ -39,12 +39,10 @@ class GameManager {
     
     const { game, whitePlayerId, blackPlayerId } = gameData;
     
-    // Validate player is in game
     if (playerId !== whitePlayerId && playerId !== blackPlayerId) {
       return { success: false, error: 'You are not in this game' };
     }
     
-    // Validate turn
     const isWhiteTurn = game.turn() === 'w';
     const isWhitePlayer = playerId === whitePlayerId;
     
@@ -52,7 +50,6 @@ class GameManager {
       return { success: false, error: 'Not your turn' };
     }
     
-    // Validate and make move
     try {
       const move = game.move({
         from: from,
@@ -61,7 +58,6 @@ class GameManager {
       });
       
       if (move) {
-        // Update player stats if game ended
         if (game.in_checkmate() || game.in_stalemate()) {
           this.updatePlayerStats(gameData, game);
         }
@@ -118,19 +114,20 @@ class GameManager {
     return gameData ? gameData.blackPlayerId : null;
   }
 
-  removePlayer(playerId) {
-    const gameId = this.playerToGame.get(playerId);
-    if (gameId) {
-      const gameData = this.games.get(gameId);
-      if (gameData && (!gameData.blackPlayerId || gameData.whitePlayerId === playerId)) {
-        this.games.delete(gameId);
-      }
-      this.playerToGame.delete(playerId);
-    }
-  }
+  // FIXED: Now accepts userId, not socket.id
+  removePlayer(userId) {  // LINE 83 - changed parameter from socket.id to userId
+    const gameId = this.playerToGame.get(userId);  
+    if (gameId) { 
+      const gameData = this.games.get(gameId);  
+      if (gameData && (!gameData.blackPlayerId || gameData.whitePlayerId === userId)) {  
+        this.games.delete(gameId);  
+      }  
+      this.playerToGame.delete(userId);  
+    }  
+  }  
 
-  generateGameId() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
+ generateGameId() {  // LINE 94
+    return Math.random().toString(36).substring(2, 8).toUpperCase();  // LINE 95
   }
 }
 
